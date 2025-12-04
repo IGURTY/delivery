@@ -17,6 +17,7 @@ type Props = {
   delivery: Delivery;
   onStatusChange: (status: Status) => void;
   onAttachProof: (file: File) => void;
+  showWaze?: boolean;
 };
 
 const statusColors = {
@@ -31,8 +32,13 @@ const statusLabel = {
   "nao-entregue": "Não entregue",
 };
 
-const DeliveryCard: React.FC<Props> = ({ delivery, onStatusChange, onAttachProof }) => {
+const DeliveryCard: React.FC<Props> = ({ delivery, onStatusChange, onAttachProof, showWaze }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Monta o link do Waze usando o CEP e número
+  const wazeUrl = `https://waze.com/ul?q=${encodeURIComponent(
+    `${delivery.cep}${delivery.numero ? ', ' + delivery.numero : ''}`
+  )}`;
 
   return (
     <div className={`rounded-2xl shadow-lg p-4 border-2 flex flex-col gap-2 ${statusColors[delivery.status]}`}>
@@ -50,6 +56,17 @@ const DeliveryCard: React.FC<Props> = ({ delivery, onStatusChange, onAttachProof
           <div className="text-gray-700 text-sm">CEP: <span className="font-mono">{delivery.cep}</span></div>
           <div className="text-gray-700 text-sm">Nº: <span className="font-mono">{delivery.numero}</span></div>
         </div>
+        {showWaze && (
+          <a
+            href={wazeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir no Waze"
+            className="ml-2 flex items-center justify-center bg-blue-100 hover:bg-blue-200 rounded-full p-2 transition"
+          >
+            <img src="https://upload.wikimedia.org/wikipedia/commons/0/09/Waze_new_logo.png" alt="Waze" className="w-7 h-7" />
+          </a>
+        )}
       </div>
       <div className="flex items-center gap-2 mt-2">
         <button
@@ -104,7 +121,7 @@ const DeliveryCard: React.FC<Props> = ({ delivery, onStatusChange, onAttachProof
       </div>
       {delivery.status === "entregue" && delivery.proofImage && (
         <div className="flex items-center gap-2 mt-2">
-          <ImageIcon className="w-5 h-5 text-green-500" />
+          <img src="https://upload.wikimedia.org/wikipedia/commons/0/09/Waze_new_logo.png" alt="Waze" className="w-5 h-5" />
           <span className="text-green-700 text-sm">Prova de entrega anexada</span>
           <img src={delivery.proofImage} alt="Prova de entrega" className="w-12 h-12 rounded border ml-2" />
         </div>

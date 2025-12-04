@@ -65,6 +65,7 @@ const RouteFlow: React.FC = () => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(false);
   const [directions, setDirections] = useState<any>(null);
+  const [orderedDeliveries, setOrderedDeliveries] = useState<Delivery[]>([]);
   const [step, setStep] = useState(0);
   const navigate = useNavigate();
 
@@ -108,6 +109,9 @@ const RouteFlow: React.FC = () => {
     setDeliveries((prev) =>
       prev.map((d) => (d.id === id ? { ...d, status } : d))
     );
+    setOrderedDeliveries((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, status } : d))
+    );
   };
 
   const handleAttachProof = (id: string, file: File) => {
@@ -115,6 +119,13 @@ const RouteFlow: React.FC = () => {
     reader.onload = (ev) => {
       if (ev.target?.result) {
         setDeliveries((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? { ...d, status: "entregue", proofImage: ev.target!.result as string }
+              : d
+          )
+        );
+        setOrderedDeliveries((prev) =>
           prev.map((d) =>
             d.id === id
               ? { ...d, status: "entregue", proofImage: ev.target!.result as string }
@@ -134,6 +145,13 @@ const RouteFlow: React.FC = () => {
       const ceps = [startCep, ...deliveries.map((d) => d.cep)];
       const route = await generateRoute(ceps);
       setDirections(route);
+
+      // Ordena os cards conforme a ordem otimizada da rota
+      // Google retorna waypoint_order (índices dos waypoints na ordem ótima)
+      const waypointOrder = route?.waypoint_order || [];
+      // O primeiro é sempre o ponto de partida, os waypoints são os destinos
+      const ordered = waypointOrder.map((idx: number) => deliveries[idx]);
+      setOrderedDeliveries(ordered);
       toast.success("Rota gerada com sucesso!");
     } catch {
       toast.error("Falha ao gerar rota.");
@@ -144,6 +162,7 @@ const RouteFlow: React.FC = () => {
 
   const handleReset = () => {
     setDeliveries([]);
+    setOrderedDeliveries([]);
     setDirections(null);
     setStartCep("");
     setStartTouched(false);
@@ -293,7 +312,7 @@ const RouteFlow: React.FC = () => {
           </>
         )}
 
-        {/* Exibição do mapa */}
+        {/* Exibição do mapa e cardlist na ordem da rota */}
         {directions && (
           <div className="mt-8">
             <h3 className="text-xl font-bold mb-2 text-cyan-200 text-center">
@@ -302,6 +321,18 @@ const RouteFlow: React.FC = () => {
             <div className="rounded-2xl overflow-hidden border-2 border-cyan-400 shadow-xl mb-4">
               <RouteMap directions={directions} />
             </div>
+            <ul className="space-y-4 mb-6">
+              {orderedDeliveries.map((delivery, idx) => (
+                <li key={delivery.id}>
+                  <DeliveryCard
+                    delivery={delivery}
+                    onStatusChange={(status) => handleStatusChange(delivery.id, status)}
+                    onAttachProof={(file) => handleAttachProof(delivery.id, file)}
+                    showWaze
+                  />
+                </li>
+              ))}
+            </ul>
             <button
               className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-2xl font-bold text-lg shadow-xl hover:from-cyan-600 hover:to-blue-600 transition"
               onClick={handleReset}
