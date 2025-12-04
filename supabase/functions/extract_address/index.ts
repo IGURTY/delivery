@@ -25,7 +25,7 @@ serve(async (req) => {
       })
     }
 
-    // Chamada à OpenAI GPT-4 Vision
+    // Chamada à OpenAI GPT-4 Vision para extrair apenas o CEP
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -38,12 +38,12 @@ serve(async (req) => {
           {
             role: "user",
             content: [
-              { type: "text", text: "Extraia o endereço da imagem. Responda apenas com o endereço, sem explicações." },
+              { type: "text", text: "Extraia apenas o CEP da imagem. Responda somente com o CEP, sem explicações, no formato 00000-000." },
               { type: "image_url", image_url: { url: imageBase64 } },
             ],
           },
         ],
-        max_tokens: 100,
+        max_tokens: 20,
       }),
     })
 
@@ -56,9 +56,10 @@ serve(async (req) => {
     }
 
     const openaiData = await openaiRes.json()
-    const address = openaiData.choices?.[0]?.message?.content?.trim() || ""
+    // Extrai o CEP da resposta
+    const cep = openaiData.choices?.[0]?.message?.content?.trim() || ""
 
-    return new Response(JSON.stringify({ address }), {
+    return new Response(JSON.stringify({ cep }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })

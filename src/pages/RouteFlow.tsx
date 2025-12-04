@@ -8,29 +8,29 @@ import { Camera, MapPin, Loader2, CheckCircle2, ArrowRight } from "lucide-react"
 type AddressItem = {
   id: string;
   image: string;
-  address: string;
+  cep: string;
 };
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
 const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
 const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/generate_route`;
 
-async function extractAddressFromImage(image: string): Promise<string> {
+async function extractCepFromImage(image: string): Promise<string> {
   const res = await fetch(EDGE_FUNCTION_EXTRACT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageBase64: image }),
+    body: JSON.stringify({ imageBase64: image, onlyCep: true }),
   });
-  if (!res.ok) throw new Error("Erro ao extrair endereço");
+  if (!res.ok) throw new Error("Erro ao extrair CEP");
   const data = await res.json();
-  return data.address;
+  return data.cep || data.address || "";
 }
 
-async function generateRoute(addresses: string[]): Promise<any> {
+async function generateRoute(ceps: string[]): Promise<any> {
   const res = await fetch(EDGE_FUNCTION_ROUTE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ addresses }),
+    body: JSON.stringify({ addresses: ceps }),
   });
   if (!res.ok) throw new Error("Erro ao gerar rota");
   const data = await res.json();
@@ -39,14 +39,14 @@ async function generateRoute(addresses: string[]): Promise<any> {
 
 const steps = [
   {
-    label: "Endereço Inicial",
+    label: "CEP Inicial",
     icon: <MapPin className="w-6 h-6" />,
-    description: "Informe o endereço de onde você vai sair para iniciar as entregas.",
+    description: "Informe o CEP de onde você vai sair para iniciar as entregas.",
   },
   {
     label: "Capturar Endereços",
     icon: <Camera className="w-6 h-6" />,
-    description: "Fotografe placas, correspondências ou fachadas para extrair endereços automaticamente.",
+    description: "Fotografe placas, correspondências ou fachadas para extrair automaticamente o CEP.",
   },
   {
     label: "Gerar Rota",
@@ -60,8 +60,13 @@ const steps = [
   },
 ];
 
+function isValidCep(cep: string) {
+  // Aceita formato 00000-000 ou 00000000
+  return /^\d{5}-?\d{3}$/.test(cep.trim());
+}
+
 const RouteFlow: React.FC = () => {
-  const [startAddress, setStartAddress] = useState("");
+  const [startCep, setStartCep] = useState("");
   const [startTouched, setStartTouched] = useState(false);
   const [addresses, setAddresses] = useState<AddressItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -72,23 +77,28 @@ const RouteFlow: React.FC = () => {
   // Atualiza o passo conforme o progresso
   React.useEffect(() => {
     if (directions) setStep(3);
-    else if (addresses.length >= 1 && startAddress) setStep(2);
-    else if (startAddress) setStep(1);
+    else if (addresses.length >= 1 && startCep) setStep(2);
+    else if (startCep) setStep(1);
     else setStep(0);
-  }, [addresses, directions, startAddress]);
+  }, [addresses, directions, startCep]);
 
   const handleAddImage = async (img: string) => {
     setLoading(true);
-    toast("Analisando imagem e extraindo endereço...");
+    toast("Analisando imagem e extraindo CEP...");
     try {
-      const address = await extractAddressFromImage(img);
+      const cep = await extractCepFromImage(img);
+      if (!isValidCep(cep)) {
+        toast.error("Não foi possível extrair um CEP válido da imagem.");
+        setLoading(false);
+        return;
+      }
       setAddresses((prev) => [
         ...prev,
-        { id: Date.now().toString(), image: img, address },
+        { id: Date.now().toString(), image: img, cep },
       ]);
-      toast.success("Endereço extraído com sucesso!");
+      toast.success("CEP extraído com sucesso!");
     } catch {
-      toast.error("Falha ao extrair endereço da imagem.");
+      toast.error("Falha ao extrair CEP da imagem.");
     } finally {
       setLoading(false);
     }
@@ -98,9 +108,9 @@ const RouteFlow: React.FC = () => {
     setLoading(true);
     toast("Gerando rota otimizada...");
     try {
-      // O endereço inicial é sempre o primeiro da lista
-      const addrList = [startAddress, ...addresses.map((a) => a.address)];
-      const route = await generateRoute(addrList);
+      // O CEP inicial é sempre o primeiro da lista
+      const ceps = [startCep, ...addresses.map((a) => a.cep)];
+      const route = await generateRoute(ceps);
       setDirections(route);
       toast.success("Rota gerada com sucesso!");
     } catch {
@@ -113,12 +123,12 @@ const RouteFlow: React.FC = () => {
   const handleReset = () => {
     setAddresses([]);
     setDirections(null);
-    setStartAddress("");
+    setStartCep("");
     setStartTouched(false);
     setStep(0);
   };
 
-  const isStartValid = startAddress.trim().length > 5;
+  const isStartValid = isValidCep(startCep);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-900 px-2 py-8">
@@ -163,7 +173,7 @@ const RouteFlow: React.FC = () => {
           <p className="text-cyan-100 text-base md:text-lg">{steps[step].description}</p>
         </div>
 
-        {/* Passo 1: Endereço inicial */}
+        {/* Passo 1: CEP inicial */}
         {!directions && step === 0 && (
           <form
             className="flex flex-col items-center gap-4"
@@ -176,16 +186,19 @@ const RouteFlow: React.FC = () => {
             <input
               type="text"
               className="w-full rounded-2xl px-4 py-3 border-2 border-cyan-300 bg-white/80 text-gray-900 text-lg shadow focus:outline-none focus:ring-2 focus:ring-cyan-400"
-              placeholder="Digite seu endereço de partida"
-              value={startAddress}
-              onChange={(e) => setStartAddress(e.target.value)}
+              placeholder="Digite seu CEP de partida (ex: 12345-678)"
+              value={startCep}
+              onChange={(e) => setStartCep(e.target.value)}
               onBlur={() => setStartTouched(true)}
               autoFocus
               required
+              maxLength={9}
+              inputMode="numeric"
+              pattern="\d{5}-?\d{3}"
             />
             {startTouched && !isStartValid && (
               <span className="text-red-400 text-sm">
-                Informe um endereço válido (mínimo 6 caracteres).
+                Informe um CEP válido (ex: 12345-678).
               </span>
             )}
             <button
@@ -193,7 +206,7 @@ const RouteFlow: React.FC = () => {
               type="submit"
               disabled={!isStartValid}
             >
-              Confirmar Endereço Inicial
+              Confirmar CEP Inicial
             </button>
           </form>
         )}
@@ -217,9 +230,9 @@ const RouteFlow: React.FC = () => {
                 </div>
                 <div>
                   <div className="font-semibold text-cyan-900">
-                    Ponto de Partida
+                    CEP de Partida
                   </div>
-                  <div className="text-gray-700 text-sm">{startAddress}</div>
+                  <div className="text-gray-700 text-sm">{startCep}</div>
                 </div>
               </li>
               {addresses.map((item, idx) => (
@@ -234,9 +247,9 @@ const RouteFlow: React.FC = () => {
                   />
                   <div>
                     <div className="font-semibold text-cyan-900">
-                      Endereço {idx + 1}
+                      CEP {idx + 1}
                     </div>
-                    <div className="text-gray-700 text-sm">{item.address}</div>
+                    <div className="text-gray-700 text-sm">{item.cep}</div>
                   </div>
                 </li>
               ))}
@@ -261,7 +274,7 @@ const RouteFlow: React.FC = () => {
                 onClick={handleReset}
                 type="button"
               >
-                Limpar endereços
+                Limpar CEPs
               </button>
             )}
           </>
