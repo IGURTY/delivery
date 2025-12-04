@@ -9,14 +9,15 @@ type AddressItem = {
   address: string;
 };
 
-function mockExtractAddress(image: string): Promise<string> {
-  // Simula extração de endereço via IA
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      // Retorna um endereço fictício
-      resolve("Rua Exemplo, 123 - Bairro, Cidade");
-    }, 1200);
+async function extractAddressFromImage(image: string): Promise<string> {
+  const res = await fetch("/api/extract-address", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageBase64: image }),
   });
+  if (!res.ok) throw new Error("Erro ao extrair endereço");
+  const data = await res.json();
+  return data.address;
 }
 
 const RouteFlow: React.FC = () => {
@@ -28,7 +29,7 @@ const RouteFlow: React.FC = () => {
     setLoading(true);
     toast("Analisando imagem e extraindo endereço...");
     try {
-      const address = await mockExtractAddress(img);
+      const address = await extractAddressFromImage(img);
       setAddresses((prev) => [
         ...prev,
         { id: Date.now().toString(), image: img, address },
@@ -42,7 +43,6 @@ const RouteFlow: React.FC = () => {
   };
 
   const handleGenerateRoute = () => {
-    // Aqui você pode navegar para a tela de mapa/rota
     toast("Funcionalidade de geração de rota em breve!");
   };
 
