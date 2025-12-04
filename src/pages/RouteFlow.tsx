@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import ImageCapture from "@/components/ImageCapture";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import RouteMap from "@/components/RouteMap";
 
 type AddressItem = {
   id: string;
@@ -10,10 +11,11 @@ type AddressItem = {
 };
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
-const EDGE_FUNCTION_URL = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
+const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
+const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/generate_route`;
 
 async function extractAddressFromImage(image: string): Promise<string> {
-  const res = await fetch(EDGE_FUNCTION_URL, {
+  const res = await fetch(EDGE_FUNCTION_EXTRACT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imageBase64: image }),
@@ -23,9 +25,21 @@ async function extractAddressFromImage(image: string): Promise<string> {
   return data.address;
 }
 
+async function generateRoute(addresses: string[]): Promise<any> {
+  const res = await fetch(EDGE_FUNCTION_ROUTE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ addresses }),
+  });
+  if (!res.ok) throw new Error("Erro ao gerar rota");
+  const data = await res.json();
+  return data.route;
+}
+
 const RouteFlow: React.FC = () => {
   const [addresses, setAddresses] = useState<AddressItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [directions, setDirections] = useState<any>(null);
   const navigate = useNavigate();
 
   const handleAddImage = async (img: string) => {
@@ -45,8 +59,19 @@ const RouteFlow: React.FC = () => {
     }
   };
 
-  const handleGenerateRoute = () => {
-    toast("Funcionalidade de geração de rota em breve!");
+  const handleGenerateRoute = async () => {
+    setLoading(true);
+    toast("Gerando rota otimizada...");
+    try {
+      const addrList = addresses.map((a) => a.address);
+      const route = await generateRoute(addrList);
+      setDirections(route);
+      toast.success("Rota gerada com sucesso!");
+    } catch {
+      toast.error("Falha ao gerar rota.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -56,7 +81,7 @@ const RouteFlow: React.FC = () => {
         <ImageCapture onImage={handleAddImage} />
       </div>
       {loading && (
-        <div className="text-blue-600 text-center mb-2">Processando imagem...</div>
+        <div className="text-blue-600 text-center mb-2">Processando...</div>
       )}
       <ul className="space-y-4 mb-6">
         {addresses.map((item, idx) => (
@@ -83,6 +108,12 @@ const RouteFlow: React.FC = () => {
       >
         Voltar
       </button>
+      {directions && (
+        <div className="mt-8">
+          <h3 className="text-xl font-bold mb-2 text-center">Rota no Mapa</h3>
+          <RouteMap directions={directions} />
+        </div>
+      )}
     </div>
   );
 };
