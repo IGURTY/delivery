@@ -25,7 +25,7 @@ serve(async (req) => {
       })
     }
 
-    // Chamada à OpenAI GPT-4 Vision para extrair nome, CEP e número
+    // Chamada à OpenAI GPT-4o para extrair nome, CEP e número
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -33,7 +33,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4-vision-preview",
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
