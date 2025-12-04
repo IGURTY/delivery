@@ -25,7 +25,7 @@ serve(async (req) => {
       })
     }
 
-    // Chamada à OpenAI GPT-4 Vision para extrair apenas o CEP
+    // Chamada à OpenAI GPT-4 Vision para extrair nome, CEP e número
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -38,12 +38,12 @@ serve(async (req) => {
           {
             role: "user",
             content: [
-              { type: "text", text: "Extraia apenas o CEP da imagem. Responda somente com o CEP, sem explicações, no formato 00000-000." },
+              { type: "text", text: "Extraia da imagem: 1) Nome do destinatário, 2) CEP (formato 00000-000), 3) Número da casa. Responda em JSON: { \"nome\": \"...\", \"cep\": \"...\", \"numero\": \"...\" }" },
               { type: "image_url", image_url: { url: imageBase64 } },
             ],
           },
         ],
-        max_tokens: 20,
+        max_tokens: 100,
       }),
     })
 
@@ -56,10 +56,20 @@ serve(async (req) => {
     }
 
     const openaiData = await openaiRes.json()
-    // Extrai o CEP da resposta
-    const cep = openaiData.choices?.[0]?.message?.content?.trim() || ""
+    // Tenta extrair JSON da resposta
+    let nome = "", cep = "", numero = "";
+    try {
+      const content = openaiData.choices?.[0]?.message?.content?.trim() || "";
+      const match = content.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        nome = parsed.nome || "";
+        cep = parsed.cep || "";
+        numero = parsed.numero || "";
+      }
+    } catch {}
 
-    return new Response(JSON.stringify({ cep }), {
+    return new Response(JSON.stringify({ nome, cep, numero }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })

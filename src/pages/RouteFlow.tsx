@@ -3,27 +3,22 @@ import ImageCapture from "@/components/ImageCapture";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import RouteMap from "@/components/RouteMap";
-import { Camera, MapPin, Loader2, CheckCircle2, ArrowRight } from "lucide-react";
-
-type AddressItem = {
-  id: string;
-  image: string;
-  cep: string;
-};
+import DeliveryCard, { Delivery } from "@/components/DeliveryCard";
+import { Loader2, MapPin, ArrowRight, CheckCircle2, Camera } from "lucide-react";
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
 const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
 const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/generate_route`;
 
-async function extractCepFromImage(image: string): Promise<string> {
+async function extractDeliveryData(image: string): Promise<{ nome: string; cep: string; numero: string }> {
   const res = await fetch(EDGE_FUNCTION_EXTRACT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageBase64: image, onlyCep: true }),
+    body: JSON.stringify({ imageBase64: image }),
   });
-  if (!res.ok) throw new Error("Erro ao extrair CEP");
+  if (!res.ok) throw new Error("Erro ao extrair dados");
   const data = await res.json();
-  return data.cep || data.address || "";
+  return { nome: data.nome || "", cep: data.cep || "", numero: data.numero || "" };
 }
 
 async function generateRoute(ceps: string[]): Promise<any> {
@@ -37,6 +32,10 @@ async function generateRoute(ceps: string[]): Promise<any> {
   return data.route;
 }
 
+function isValidCep(cep: string) {
+  return /^\d{5}-?\d{3}$/.test(cep.trim());
+}
+
 const steps = [
   {
     label: "CEP Inicial",
@@ -44,9 +43,9 @@ const steps = [
     description: "Informe o CEP de onde você vai sair para iniciar as entregas.",
   },
   {
-    label: "Capturar Endereços",
+    label: "Cadastrar Entregas",
     icon: <Camera className="w-6 h-6" />,
-    description: "Fotografe placas, correspondências ou fachadas para extrair automaticamente o CEP.",
+    description: "Fotografe a fachada, placa ou correspondência de cada entrega. A IA extrai nome, CEP e número.",
   },
   {
     label: "Gerar Rota",
@@ -60,56 +59,79 @@ const steps = [
   },
 ];
 
-function isValidCep(cep: string) {
-  // Aceita formato 00000-000 ou 00000000
-  return /^\d{5}-?\d{3}$/.test(cep.trim());
-}
-
 const RouteFlow: React.FC = () => {
   const [startCep, setStartCep] = useState("");
   const [startTouched, setStartTouched] = useState(false);
-  const [addresses, setAddresses] = useState<AddressItem[]>([]);
+  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(false);
   const [directions, setDirections] = useState<any>(null);
   const [step, setStep] = useState(0);
   const navigate = useNavigate();
 
-  // Atualiza o passo conforme o progresso
   React.useEffect(() => {
     if (directions) setStep(3);
-    else if (addresses.length >= 1 && startCep) setStep(2);
+    else if (deliveries.length >= 1 && startCep) setStep(2);
     else if (startCep) setStep(1);
     else setStep(0);
-  }, [addresses, directions, startCep]);
+  }, [deliveries, directions, startCep]);
 
   const handleAddImage = async (img: string) => {
     setLoading(true);
-    toast("Analisando imagem e extraindo CEP...");
+    toast("Analisando imagem e extraindo dados...");
     try {
-      const cep = await extractCepFromImage(img);
+      const { nome, cep, numero } = await extractDeliveryData(img);
       if (!isValidCep(cep)) {
         toast.error("Não foi possível extrair um CEP válido da imagem.");
         setLoading(false);
         return;
       }
-      setAddresses((prev) => [
+      setDeliveries((prev) => [
         ...prev,
-        { id: Date.now().toString(), image: img, cep },
+        {
+          id: Date.now().toString(),
+          nome,
+          cep,
+          numero,
+          image: img,
+          status: "pendente",
+        },
       ]);
-      toast.success("CEP extraído com sucesso!");
+      toast.success("Dados extraídos com sucesso!");
     } catch {
-      toast.error("Falha ao extrair CEP da imagem.");
+      toast.error("Falha ao extrair dados da imagem.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleStatusChange = (id: string, status: "pendente" | "entregue" | "nao-entregue") => {
+    setDeliveries((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, status } : d))
+    );
+  };
+
+  const handleAttachProof = (id: string, file: File) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (ev.target?.result) {
+        setDeliveries((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? { ...d, status: "entregue", proofImage: ev.target!.result as string }
+              : d
+          )
+        );
+        toast.success("Prova de entrega anexada!");
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleGenerateRoute = async () => {
     setLoading(true);
     toast("Gerando rota otimizada...");
     try {
-      // O CEP inicial é sempre o primeiro da lista
-      const ceps = [startCep, ...addresses.map((a) => a.cep)];
+      const ceps = [startCep, ...deliveries.map((d) => d.cep)];
       const route = await generateRoute(ceps);
       setDirections(route);
       toast.success("Rota gerada com sucesso!");
@@ -121,7 +143,7 @@ const RouteFlow: React.FC = () => {
   };
 
   const handleReset = () => {
-    setAddresses([]);
+    setDeliveries([]);
     setDirections(null);
     setStartCep("");
     setStartTouched(false);
@@ -211,7 +233,7 @@ const RouteFlow: React.FC = () => {
           </form>
         )}
 
-        {/* Passo 2: Captura de endereços */}
+        {/* Passo 2: Cadastro de entregas */}
         {!directions && step > 0 && (
           <>
             <div className="mb-6">
@@ -235,29 +257,20 @@ const RouteFlow: React.FC = () => {
                   <div className="text-gray-700 text-sm">{startCep}</div>
                 </div>
               </li>
-              {addresses.map((item, idx) => (
-                <li
-                  key={item.id}
-                  className="flex items-center gap-3 bg-white/80 rounded-2xl shadow-lg p-3 border border-cyan-100"
-                >
-                  <img
-                    src={item.image}
-                    alt="Endereço"
-                    className="w-16 h-16 object-cover rounded-xl border-2 border-cyan-300"
+              {deliveries.map((delivery) => (
+                <li key={delivery.id}>
+                  <DeliveryCard
+                    delivery={delivery}
+                    onStatusChange={(status) => handleStatusChange(delivery.id, status)}
+                    onAttachProof={(file) => handleAttachProof(delivery.id, file)}
                   />
-                  <div>
-                    <div className="font-semibold text-cyan-900">
-                      CEP {idx + 1}
-                    </div>
-                    <div className="text-gray-700 text-sm">{item.cep}</div>
-                  </div>
                 </li>
               ))}
             </ul>
             <button
               className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-2xl font-bold text-lg shadow-xl hover:from-cyan-600 hover:to-blue-600 transition disabled:opacity-50"
               onClick={handleGenerateRoute}
-              disabled={addresses.length < 1 || loading}
+              disabled={deliveries.length < 1 || loading}
             >
               Gerar Rota
             </button>
@@ -268,13 +281,13 @@ const RouteFlow: React.FC = () => {
             >
               Voltar ao início
             </button>
-            {addresses.length > 0 && (
+            {deliveries.length > 0 && (
               <button
                 className="w-full mt-2 text-xs text-gray-400 hover:text-red-400 underline"
                 onClick={handleReset}
                 type="button"
               >
-                Limpar CEPs
+                Limpar entregas
               </button>
             )}
           </>
