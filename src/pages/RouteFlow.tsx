@@ -9,8 +9,11 @@ type AddressItem = {
   address: string;
 };
 
+const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
+const EDGE_FUNCTION_URL = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
+
 async function extractAddressFromImage(image: string): Promise<string> {
-  const res = await fetch("/api/extract-address", {
+  const res = await fetch(EDGE_FUNCTION_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imageBase64: image }),
