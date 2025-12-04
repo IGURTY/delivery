@@ -39,14 +39,14 @@ async function generateRoute(addresses: string[]): Promise<any> {
 
 const steps = [
   {
+    label: "Endereço Inicial",
+    icon: <MapPin className="w-6 h-6" />,
+    description: "Informe o endereço de onde você vai sair para iniciar as entregas.",
+  },
+  {
     label: "Capturar Endereços",
     icon: <Camera className="w-6 h-6" />,
     description: "Fotografe placas, correspondências ou fachadas para extrair endereços automaticamente.",
-  },
-  {
-    label: "Visualizar Endereços",
-    icon: <MapPin className="w-6 h-6" />,
-    description: "Confira e confirme os endereços extraídos pela IA.",
   },
   {
     label: "Gerar Rota",
@@ -61,6 +61,8 @@ const steps = [
 ];
 
 const RouteFlow: React.FC = () => {
+  const [startAddress, setStartAddress] = useState("");
+  const [startTouched, setStartTouched] = useState(false);
   const [addresses, setAddresses] = useState<AddressItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [directions, setDirections] = useState<any>(null);
@@ -70,10 +72,10 @@ const RouteFlow: React.FC = () => {
   // Atualiza o passo conforme o progresso
   React.useEffect(() => {
     if (directions) setStep(3);
-    else if (addresses.length >= 2) setStep(2);
-    else if (addresses.length > 0) setStep(1);
+    else if (addresses.length >= 1 && startAddress) setStep(2);
+    else if (startAddress) setStep(1);
     else setStep(0);
-  }, [addresses, directions]);
+  }, [addresses, directions, startAddress]);
 
   const handleAddImage = async (img: string) => {
     setLoading(true);
@@ -96,7 +98,8 @@ const RouteFlow: React.FC = () => {
     setLoading(true);
     toast("Gerando rota otimizada...");
     try {
-      const addrList = addresses.map((a) => a.address);
+      // O endereço inicial é sempre o primeiro da lista
+      const addrList = [startAddress, ...addresses.map((a) => a.address)];
       const route = await generateRoute(addrList);
       setDirections(route);
       toast.success("Rota gerada com sucesso!");
@@ -110,8 +113,12 @@ const RouteFlow: React.FC = () => {
   const handleReset = () => {
     setAddresses([]);
     setDirections(null);
+    setStartAddress("");
+    setStartTouched(false);
     setStep(0);
   };
+
+  const isStartValid = startAddress.trim().length > 5;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-900 px-2 py-8">
@@ -156,8 +163,43 @@ const RouteFlow: React.FC = () => {
           <p className="text-cyan-100 text-base md:text-lg">{steps[step].description}</p>
         </div>
 
-        {/* Fluxo de captura e visualização */}
-        {!directions && (
+        {/* Passo 1: Endereço inicial */}
+        {!directions && step === 0 && (
+          <form
+            className="flex flex-col items-center gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setStartTouched(true);
+              if (isStartValid) setStep(1);
+            }}
+          >
+            <input
+              type="text"
+              className="w-full rounded-2xl px-4 py-3 border-2 border-cyan-300 bg-white/80 text-gray-900 text-lg shadow focus:outline-none focus:ring-2 focus:ring-cyan-400"
+              placeholder="Digite seu endereço de partida"
+              value={startAddress}
+              onChange={(e) => setStartAddress(e.target.value)}
+              onBlur={() => setStartTouched(true)}
+              autoFocus
+              required
+            />
+            {startTouched && !isStartValid && (
+              <span className="text-red-400 text-sm">
+                Informe um endereço válido (mínimo 6 caracteres).
+              </span>
+            )}
+            <button
+              className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-2xl font-bold text-lg shadow-xl hover:from-cyan-600 hover:to-blue-600 transition disabled:opacity-50"
+              type="submit"
+              disabled={!isStartValid}
+            >
+              Confirmar Endereço Inicial
+            </button>
+          </form>
+        )}
+
+        {/* Passo 2: Captura de endereços */}
+        {!directions && step > 0 && (
           <>
             <div className="mb-6">
               <ImageCapture onImage={handleAddImage} />
@@ -169,6 +211,17 @@ const RouteFlow: React.FC = () => {
               </div>
             )}
             <ul className="space-y-4 mb-6">
+              <li className="flex items-center gap-3 bg-cyan-100/80 rounded-2xl shadow-lg p-3 border border-cyan-200">
+                <div className="w-16 h-16 flex items-center justify-center rounded-xl border-2 border-cyan-400 bg-cyan-50 text-cyan-700 font-bold text-xl">
+                  INI
+                </div>
+                <div>
+                  <div className="font-semibold text-cyan-900">
+                    Ponto de Partida
+                  </div>
+                  <div className="text-gray-700 text-sm">{startAddress}</div>
+                </div>
+              </li>
               {addresses.map((item, idx) => (
                 <li
                   key={item.id}
@@ -191,7 +244,7 @@ const RouteFlow: React.FC = () => {
             <button
               className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-2xl font-bold text-lg shadow-xl hover:from-cyan-600 hover:to-blue-600 transition disabled:opacity-50"
               onClick={handleGenerateRoute}
-              disabled={addresses.length < 2 || loading}
+              disabled={addresses.length < 1 || loading}
             >
               Gerar Rota
             </button>
