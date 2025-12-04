@@ -4,13 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import RouteMap from "@/components/RouteMap";
 import DeliveryCard, { Delivery } from "@/components/DeliveryCard";
-import { Loader2, MapPin, ArrowRight, CheckCircle2, Camera } from "lucide-react";
+import { Loader2, MapPin, ArrowRight, CheckCircle2, Camera, Trash2 } from "lucide-react";
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
 const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
 const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/generate_route`;
 
-async function extractDeliveryData(image: string): Promise<{ nome: string; cep: string; numero: string }> {
+async function extractDeliveryData(image: string): Promise<{ nome: string; cep: string; numero: string; rua?: string; bairro?: string; cidade?: string; estado?: string }> {
   const res = await fetch(EDGE_FUNCTION_EXTRACT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -18,7 +18,15 @@ async function extractDeliveryData(image: string): Promise<{ nome: string; cep: 
   });
   if (!res.ok) throw new Error("Erro ao extrair dados");
   const data = await res.json();
-  return { nome: data.nome || "", cep: data.cep || "", numero: data.numero || "" };
+  return {
+    nome: data.nome || "",
+    cep: data.cep || "",
+    numero: data.numero || "",
+    rua: data.rua || "",
+    bairro: data.bairro || "",
+    cidade: data.cidade || "",
+    estado: data.estado || "",
+  };
 }
 
 async function generateRoute(ceps: string[]): Promise<any> {
@@ -80,12 +88,7 @@ const RouteFlow: React.FC = () => {
     setLoading(true);
     toast("Analisando imagem e extraindo dados...");
     try {
-      const { nome, cep, numero } = await extractDeliveryData(img);
-      if (!isValidCep(cep)) {
-        toast.error("Não foi possível extrair um CEP válido da imagem.");
-        setLoading(false);
-        return;
-      }
+      const { nome, cep, numero, rua, bairro, cidade, estado } = await extractDeliveryData(img);
       setDeliveries((prev) => [
         ...prev,
         {
@@ -95,9 +98,17 @@ const RouteFlow: React.FC = () => {
           numero,
           image: img,
           status: "pendente",
+          rua,
+          bairro,
+          cidade,
+          estado,
         },
       ]);
-      toast.success("Dados extraídos com sucesso!");
+      if (!isValidCep(cep)) {
+        toast.error("Não foi possível extrair um CEP válido da imagem. Você pode remover ou refazer a entrega.");
+      } else {
+        toast.success("Dados extraídos com sucesso!");
+      }
     } catch {
       toast.error("Falha ao extrair dados da imagem.");
     } finally {
@@ -138,7 +149,20 @@ const RouteFlow: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  const handleRemoveDelivery = (id: string) => {
+    setDeliveries((prev) => prev.filter((d) => d.id !== id));
+    setOrderedDeliveries((prev) => prev.filter((d) => d.id !== id));
+  };
+
   const handleGenerateRoute = async () => {
+    // Validação: todos os deliveries precisam ter CEP válido
+    const invalid = deliveries.find((d) => !isValidCep(d.cep));
+    if (invalid) {
+      toast.error(
+        `A entrega "${invalid.nome || "sem nome"}" não possui um CEP válido. Remova ou refaça a foto.`
+      );
+      return;
+    }
     setLoading(true);
     toast("Gerando rota otimizada...");
     try {
@@ -147,14 +171,12 @@ const RouteFlow: React.FC = () => {
       setDirections(route);
 
       // Ordena os cards conforme a ordem otimizada da rota
-      // Google retorna waypoint_order (índices dos waypoints na ordem ótima)
       const waypointOrder = route?.waypoint_order || [];
-      // O primeiro é sempre o ponto de partida, os waypoints são os destinos
       const ordered = waypointOrder.map((idx: number) => deliveries[idx]);
       setOrderedDeliveries(ordered);
       toast.success("Rota gerada com sucesso!");
-    } catch {
-      toast.error("Falha ao gerar rota.");
+    } catch (err: any) {
+      toast.error("Falha ao gerar rota. Verifique se todos os CEPs estão corretos.");
     } finally {
       setLoading(false);
     }
@@ -276,15 +298,35 @@ const RouteFlow: React.FC = () => {
                   <div className="text-gray-700 text-sm">{startCep}</div>
                 </div>
               </li>
-              {deliveries.map((delivery) => (
-                <li key={delivery.id}>
-                  <DeliveryCard
-                    delivery={delivery}
-                    onStatusChange={(status) => handleStatusChange(delivery.id, status)}
-                    onAttachProof={(file) => handleAttachProof(delivery.id, file)}
-                  />
-                </li>
-              ))}
+              {deliveries.map((delivery) => {
+                const invalid = !isValidCep(delivery.cep);
+                return (
+                  <li key={delivery.id} className={invalid ? "opacity-70" : ""}>
+                    <div className="relative">
+                      <DeliveryCard
+                        delivery={delivery}
+                        onStatusChange={(status) => handleStatusChange(delivery.id, status)}
+                        onAttachProof={(file) => handleAttachProof(delivery.id, file)}
+                        showWaze
+                      />
+                      {invalid && (
+                        <div className="absolute top-2 right-2 flex items-center gap-2">
+                          <span className="text-xs text-red-500 bg-white/80 rounded px-2 py-1 shadow">
+                            CEP inválido
+                          </span>
+                          <button
+                            className="p-1 rounded-full bg-red-100 hover:bg-red-200 transition"
+                            title="Remover entrega"
+                            onClick={() => handleRemoveDelivery(delivery.id)}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
             <button
               className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white py-3 rounded-2xl font-bold text-lg shadow-xl hover:from-cyan-600 hover:to-blue-600 transition disabled:opacity-50"
