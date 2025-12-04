@@ -25,7 +25,7 @@ serve(async (req) => {
       })
     }
 
-    // Chamada à OpenAI GPT-4o para extrair nome, CEP e número
+    // Chamada à OpenAI GPT-4o para extrair todos os dados completos da entrega
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -38,12 +38,12 @@ serve(async (req) => {
           {
             role: "user",
             content: [
-              { type: "text", text: "Extraia da imagem: 1) Nome do destinatário, 2) CEP (formato 00000-000), 3) Número da casa. Responda em JSON: { \"nome\": \"...\", \"cep\": \"...\", \"numero\": \"...\" }" },
+              { type: "text", text: "Extraia da imagem todos os dados de entrega: nome do destinatário, nome da rua, número, bairro, CEP (formato 00000-000), cidade e estado, se possível. Responda apenas em JSON, exemplo: { \"nome\": \"...\", \"rua\": \"...\", \"numero\": \"...\", \"bairro\": \"...\", \"cep\": \"...\", \"cidade\": \"...\", \"estado\": \"...\" }" },
               { type: "image_url", image_url: { url: imageBase64 } },
             ],
           },
         ],
-        max_tokens: 100,
+        max_tokens: 150,
       }),
     })
 
@@ -57,19 +57,23 @@ serve(async (req) => {
 
     const openaiData = await openaiRes.json()
     // Tenta extrair JSON da resposta
-    let nome = "", cep = "", numero = "";
+    let nome = "", rua = "", numero = "", bairro = "", cep = "", cidade = "", estado = "";
     try {
       const content = openaiData.choices?.[0]?.message?.content?.trim() || "";
       const match = content.match(/\{[\s\S]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]);
         nome = parsed.nome || "";
-        cep = parsed.cep || "";
+        rua = parsed.rua || "";
         numero = parsed.numero || "";
+        bairro = parsed.bairro || "";
+        cep = parsed.cep || "";
+        cidade = parsed.cidade || "";
+        estado = parsed.estado || "";
       }
     } catch {}
 
-    return new Response(JSON.stringify({ nome, cep, numero }), {
+    return new Response(JSON.stringify({ nome, rua, numero, bairro, cep, cidade, estado }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
