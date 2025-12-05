@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { toast, Toaster } from "sonner";
 import ImageCapture from "@/components/ImageCapture";
 import DeliveryCard, { Delivery, DeliveryStatus } from "@/components/DeliveryCard";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import { MapPin, Route, Loader2, Package, RotateCcw, Info, Truck } from "lucide-react";
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
@@ -156,6 +157,7 @@ const Home: React.FC = () => {
   return (
     <div className="min-h-screen bg-dark">
       <Toaster position="top-center" richColors />
+      <PWAInstallPrompt />
 
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
         <div className="max-w-lg mx-auto px-4 py-4">
@@ -177,7 +179,7 @@ const Home: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-lg mx-auto px-4 py-6 space-y-6 pb-32">
         {deliveries.length === 0 && (
           <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
             <div className="flex items-start gap-3">
