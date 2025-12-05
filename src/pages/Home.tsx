@@ -1,17 +1,18 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { toast, Toaster } from "sonner";
 import ImageCapture from "@/components/ImageCapture";
 import DeliveryCard, { Delivery, DeliveryStatus } from "@/components/DeliveryCard";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import OfflineIndicator from "@/components/OfflineIndicator";
-import { MapPin, Route, Loader2, Package, RotateCcw, Info, Zap } from "lucide-react";
+import { MapPin, Route, Loader2, Package, RotateCcw, Info, Zap, History } from "lucide-react";
+import * as db from "@/services/database";
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
-const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
-const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/generate_route`;
+const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/extract_address`;
+const EDGE_FUNCTION_ROUTE = `https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/generate_route`;
 
 async function extractData(imageBase64: string) {
-  const res = await fetch(EDGE_FUNCTION_EXTRACT, {
+  const res =await fetch(EDGE_FUNCTION_EXTRACT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ imageBase64 }),
@@ -39,6 +40,59 @@ const Home: React.FC = () => {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(false);
   const [routeGenerated, setRouteGenerated] = useState(false);
+  const [currentRouteId, setCurrentRouteId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [routeHistory, setRouteHistory] = useState<db.DbRoute[]>([]);
+
+  // Carregar rota ativa ao iniciar
+  useEffect(() => {
+    loadActiveRoute();
+  }, []);
+
+  const loadActiveRoute = async () => {
+    setLoading(true);
+    try {
+      const activeRoute = await db.getActiveRoute();
+      if (activeRoute) {
+        setCurrentRouteId(activeRoute.id);
+        setStartCep(activeRoute.start_cep);
+        setRouteGenerated(activeRoute.status === 'completed' || activeRoute.total_deliveries > 0);
+        
+        const dbDeliveries = await db.getDeliveriesByRoute(activeRoute.id);
+        setDeliveries(dbDeliveries.map(db.dbDeliveryToDelivery));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar rota:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadRouteHistory = async () => {
+    const routes = await db.getAllRoutes();
+    setRouteHistory(routes);
+    setShowHistory(true);
+  };
+
+  const loadRoute = async (routeId: string) => {
+    setLoading(true);
+    try {
+      const dbDeliveries = await db.getDeliveriesByRoute(routeId);
+      const route = routeHistory.find(r => r.id === routeId);
+      
+      if (route) {
+        setCurrentRouteId(route.id);
+        setStartCep(route.start_cep);
+        setDeliveries(dbDeliveries.map(db.dbDeliveryToDelivery));
+        setRouteGenerated(route.total_deliveries > 0);
+      }
+      setShowHistory(false);
+    } catch (error) {
+      toast.error('Erro ao carregar rota');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCapture = async (imageBase64: string) => {
     setLoading(true);
@@ -47,6 +101,16 @@ const Home: React.FC = () => {
     try {
       const data = await extractData(imageBase64);
       toast.dismiss();
+
+      // Criar rota se não existir
+      let routeId = currentRouteId;
+      if (!routeId) {
+        const newRoute = await db.createRoute(startCep || '00000-000');
+        if (newRoute) {
+          routeId = newRoute.id;
+          setCurrentRouteId(routeId);
+        }
+      }
 
       const newDelivery: Delivery = {
         id: Date.now().toString(),
@@ -61,12 +125,20 @@ const Home: React.FC = () => {
         status: "pendente",
       };
 
+      // Salvar no banco
+      if (routeId) {
+        const dbDelivery = await db.createDelivery(routeId, newDelivery, deliveries.length);
+        if (dbDelivery) {
+          newDelivery.id = dbDelivery.id;
+        }
+      }
+
       setDeliveries((prev) => [...prev, newDelivery]);
 
       if (!isValidCep(data.cep)) {
         toast.warning("CEP não identificado.");
       } else {
-        toast.success("Entrega cadastrada!");
+        toast.success("Entrega cadastrada e salva!");
       }
     } catch {
       toast.dismiss();
@@ -76,27 +148,38 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleStatusChange = (id: string, status: DeliveryStatus) => {
+  const handleStatusChange = async (id: string, status: DeliveryStatus) => {
     setDeliveries((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
+    
+    // Atualizar no banco
+    await db.updateDeliveryStatus(id, status);
   };
 
-  const handleAttachProof = (id: string, file: File) => {
+  const handleAttachProof = async (id: string, file: File) => {
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       if (ev.target?.result) {
+        const proofImage = ev.target.result as string;
+        
         setDeliveries((prev) =>
           prev.map((d) =>
-            d.id === id ? { ...d, status: "entregue" as DeliveryStatus, proofImage: ev.target!.result as string } : d
+            d.id === id ? { ...d, status: "entregue" as DeliveryStatus, proofImage } : d
           )
         );
-        toast.success("Prova anexada!");
+        
+        // Salvar no banco com prova
+        await db.updateDeliveryStatus(id, 'entregue', proofImage);
+        toast.success("Prova anexada e salva!");
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const handleRemove = (id: string) => {
+  const handleRemove = async (id: string) => {
     setDeliveries((prev) => prev.filter((d) => d.id !== id));
+    
+    // Remover do banco
+    await db.deleteDelivery(id);
     toast.info("Entrega removida.");
   };
 
@@ -119,11 +202,17 @@ const Home: React.FC = () => {
 
       const order = data.route?.waypoint_order || [];
       if (order.length > 0) {
-        setDeliveries(order.map((i: number) => deliveries[i]));
+        const reordered = order.map((i: number) => deliveries[i]);
+        setDeliveries(reordered);
+        
+        // Atualizar ordem no banco
+        if (currentRouteId) {
+          await db.updateDeliveryOrder(currentRouteId, reordered.map(d => d.id));
+        }
       }
 
       setRouteGenerated(true);
-      toast.success("Rota gerada!");
+      toast.success("Rota gerada e salva!");
     } catch {
       toast.dismiss();
       toast.error("Erro ao gerar rota.");
@@ -132,10 +221,16 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    // Marcar rota atual como cancelada
+    if (currentRouteId) {
+      await db.updateRouteStatus(currentRouteId, 'cancelled');
+    }
+    
     setDeliveries([]);
     setStartCep("");
     setRouteGenerated(false);
+    setCurrentRouteId(null);
   };
 
   const stats = {
@@ -164,13 +259,62 @@ const Home: React.FC = () => {
               <p className="text-[10px] text-gray-500 -mt-1">Entregas Inteligentes</p>
             </div>
           </div>
-          {deliveries.length > 0 && (
-            <button onClick={handleReset} className="p-2 text-gray-400 hover:text-primary">
-              <RotateCcw className="w-5 h-5" />
+          <div className="flex items-center gap-2">
+            <button onClick={loadRouteHistory} className="p-2 text-gray-400 hover:text-primary" title="Histórico">
+              <History className="w-5 h-5" />
             </button>
-          )}
+            {deliveries.length > 0 && (
+              <button onClick={handleReset} className="p-2 text-gray-400 hover:text-primary" title="Nova Rota">
+                <RotateCcw className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
       </header>
+
+      {/* Modal de Histórico */}
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl max-w-lg w-full max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+              <h2 className="font-bold text-white">Histórico de Rotas</h2>
+              <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white">✕</button>
+            </div>
+            <div className="p-4 space-y-3">
+              {routeHistory.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">Nenhuma rota encontrada</p>
+              ) : (
+                routeHistory.map((route) => (
+                  <button
+                    key={route.id}
+                    onClick={() => loadRoute(route.id)}
+                    className="w-full p-4 bg-gray-800 rounded-lg text-left hover:bg-gray-700 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-white">CEP: {route.start_cep}</p>
+                        <p className="text-sm text-gray-400">
+                          {route.completed_deliveries}/{route.total_deliveries} entregas
+                        </p>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        route.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                        route.status === 'active' ? 'bg-blue-500/20 text-blue-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {route.status === 'completed' ? 'Concluída' : route.status === 'active' ? 'Ativa' : 'Cancelada'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      {new Date(route.created_at).toLocaleDateString('pt-BR')}
+                    </p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6 pb-32">
         {deliveries.length === 0 && (
@@ -184,7 +328,7 @@ const Home: React.FC = () => {
                   <li>Fotografe ou faça upload das etiquetas</li>
                   <li>A IA extrai automaticamente os dados</li>
                   <li>Gere a rota otimizada</li>
-                  <li>Siga a ordem e marque o status</li>
+                  <li>Tudo é salvo automaticamente! 💾</li>
                 </ol>
               </div>
             </div>
@@ -226,7 +370,7 @@ const Home: React.FC = () => {
               <p className="text-xs text-blue-300">Pendentes</p>
             </div>
             <div className="bg-green-500/20 rounded-lg p-3 text-center border border-green-500/50">
-              <p className="text-2xl font-bold text-green-400">{stats.entregues}</p>
+              <p className="text-2xl font-bold text-green-400">{stats.ent regues}</p>
               <p className="text-xs text-green-300">Entregues</p>
             </div>
             <div className="bg-red-500/20 rounded-lg p-3 text-center border border-red-500/50">
@@ -244,7 +388,7 @@ const Home: React.FC = () => {
                 Entregas ({deliveries.length})
               </h2>
               {routeGenerated && (
-                <span className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">✓ Rota otimizada</span>
+                <span className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">✓ Salvo</span>
               )}
             </div>
 
