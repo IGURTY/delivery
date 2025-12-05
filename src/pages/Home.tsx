@@ -3,7 +3,8 @@ import { toast, Toaster } from "sonner";
 import ImageCapture from "@/components/ImageCapture";
 import DeliveryCard, { Delivery, DeliveryStatus } from "@/components/DeliveryCard";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
-import { MapPin, Route, Loader2, Package, RotateCcw, Info, Truck } from "lucide-react";
+import OfflineIndicator from "@/components/OfflineIndicator";
+import { MapPin, Route, Loader2, Package, RotateCcw, Info, Zap } from "lucide-react";
 
 const SUPABASE_PROJECT_ID = "gkjyajysblgdxujbdwxc";
 const EDGE_FUNCTION_EXTRACT = `https://${SUPABASE_PROJECT_ID}.functions.supabase.co/extract_address`;
@@ -63,7 +64,7 @@ const Home: React.FC = () => {
       setDeliveries((prev) => [...prev, newDelivery]);
 
       if (!isValidCep(data.cep)) {
-        toast.warning("CEP não identificado. Verifique os dados.");
+        toast.warning("CEP não identificado.");
       } else {
         toast.success("Entrega cadastrada!");
       }
@@ -76,9 +77,7 @@ const Home: React.FC = () => {
   };
 
   const handleStatusChange = (id: string, status: DeliveryStatus) => {
-    setDeliveries((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status } : d))
-    );
+    setDeliveries((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
   };
 
   const handleAttachProof = (id: string, file: File) => {
@@ -87,12 +86,10 @@ const Home: React.FC = () => {
       if (ev.target?.result) {
         setDeliveries((prev) =>
           prev.map((d) =>
-            d.id === id
-              ? { ...d, status: "entregue", proofImage: ev.target!.result as string }
-              : d
+            d.id === id ? { ...d, status: "entregue" as DeliveryStatus, proofImage: ev.target!.result as string } : d
           )
         );
-        toast.success("Prova de entrega anexada!");
+        toast.success("Prova anexada!");
       }
     };
     reader.readAsDataURL(file);
@@ -104,36 +101,32 @@ const Home: React.FC = () => {
   };
 
   const handleGenerateRoute = async () => {
-    const invalidDelivery = deliveries.find((d) => !isValidCep(d.cep));
-    if (invalidDelivery) {
-      toast.error("Remova entregas com CEP inválido antes de gerar a rota.");
+    if (deliveries.find((d) => !isValidCep(d.cep))) {
+      toast.error("Remova entregas com CEP inválido.");
       return;
     }
-
     if (!isValidCep(startCep)) {
       toast.error("Informe um CEP de partida válido.");
       return;
     }
 
     setLoading(true);
-    toast.loading("Gerando rota otimizada...");
+    toast.loading("Gerando rota...");
 
     try {
-      const addresses = [startCep, ...deliveries.map((d) => d.cep)];
-      const data = await generateRoute(addresses);
+      const data = await generateRoute([startCep, ...deliveries.map((d) => d.cep)]);
       toast.dismiss();
 
-      const waypointOrder = data.route?.waypoint_order || [];
-      if (waypointOrder.length > 0) {
-        const reordered = waypointOrder.map((idx: number) => deliveries[idx]);
-        setDeliveries(reordered);
+      const order = data.route?.waypoint_order || [];
+      if (order.length > 0) {
+        setDeliveries(order.map((i: number) => deliveries[i]));
       }
 
       setRouteGenerated(true);
-      toast.success("Rota gerada! Siga a ordem dos cards.");
+      toast.success("Rota gerada!");
     } catch {
       toast.dismiss();
-      toast.error("Erro ao gerar rota. Verifique os CEPs.");
+      toast.error("Erro ao gerar rota.");
     } finally {
       setLoading(false);
     }
@@ -143,10 +136,8 @@ const Home: React.FC = () => {
     setDeliveries([]);
     setStartCep("");
     setRouteGenerated(false);
-    toast.info("Sistema reiniciado.");
   };
 
-  const validDeliveries = deliveries.filter((d) => isValidCep(d.cep));
   const stats = {
     total: deliveries.length,
     entregues: deliveries.filter((d) => d.status === "entregue").length,
@@ -157,25 +148,27 @@ const Home: React.FC = () => {
   return (
     <div className="min-h-screen bg-dark">
       <Toaster position="top-center" richColors />
+      <OfflineIndicator />
       <PWAInstallPrompt />
 
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
-        <div className="max-w-lg mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Truck className="w-8 h-8 text-primary" />
-              <h1 className="text-xl font-bold text-primary">DeliveryAI</h1>
+        <div className="max-w-lg mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+              <Zap className="w-6 h-6 text-dark" />
             </div>
-            {deliveries.length > 0 && (
-              <button
-                onClick={handleReset}
-                className="p-2 text-gray-400 hover:text-primary transition"
-                title="Reiniciar"
-              >
-                <RotateCcw className="w-5 h-5" />
-              </button>
-            )}
+            <div>
+              <h1 className="text-lg font-black text-white">
+                <span className="text-primary">HBLACK</span> BOLT
+              </h1>
+              <p className="text-[10px] text-gray-500 -mt-1">Entregas Inteligentes</p>
+            </div>
           </div>
+          {deliveries.length > 0 && (
+            <button onClick={handleReset} className="p-2 text-gray-400 hover:text-primary">
+              <RotateCcw className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -183,12 +176,12 @@ const Home: React.FC = () => {
         {deliveries.length === 0 && (
           <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
             <div className="flex items-start gap-3">
-              <Info className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+              <Info className="w-5 h-5 text-primary shrink-0" />
               <div className="text-sm text-gray-300">
                 <p className="font-semibold text-white mb-2">Como usar:</p>
                 <ol className="list-decimal list-inside space-y-1">
                   <li>Informe seu CEP de partida</li>
-                  <li>Fotografe cada entrega</li>
+                  <li>Fotografe ou faça upload das etiquetas</li>
                   <li>A IA extrai automaticamente os dados</li>
                   <li>Gere a rota otimizada</li>
                   <li>Siga a ordem e marque o status</li>
@@ -209,7 +202,7 @@ const Home: React.FC = () => {
             onChange={(e) => setStartCep(e.target.value)}
             placeholder="00000-000"
             maxLength={9}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-primary transition"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-primary"
           />
         </div>
 
@@ -251,9 +244,7 @@ const Home: React.FC = () => {
                 Entregas ({deliveries.length})
               </h2>
               {routeGenerated && (
-                <span className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">
-                  ✓ Rota otimizada
-                </span>
+                <span className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">✓ Rota otimizada</span>
               )}
             </div>
 
@@ -273,8 +264,8 @@ const Home: React.FC = () => {
         {deliveries.length > 0 && !routeGenerated && (
           <button
             onClick={handleGenerateRoute}
-            disabled={loading || validDeliveries.length === 0}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-dark font-bold py-4 rounded-xl hover:bg-yellow-400 transition disabled:opacity-50"
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 bg-primary text-dark font-bold py-4 rounded-xl hover:bg-yellow-400 disabled:opacity-50"
           >
             <Route className="w-5 h-5" />
             Gerar Rota Otimizada
@@ -284,7 +275,7 @@ const Home: React.FC = () => {
         {routeGenerated && (
           <button
             onClick={handleReset}
-            className="w-full flex items-center justify-center gap-2 bg-gray-800 text-white font-bold py-4 rounded-xl hover:bg-gray-700 transition border border-gray-700"
+            className="w-full flex items-center justify-center gap-2 bg-gray-800 text-white font-bold py-4 rounded-xl border border-gray-700"
           >
             <RotateCcw className="w-5 h-5" />
             Nova Rota
@@ -293,7 +284,7 @@ const Home: React.FC = () => {
       </main>
 
       <footer className="text-center py-6 text-gray-600 text-sm">
-        DeliveryAI © {new Date().getFullYear()}
+        <span className="text-primary font-bold">HBLACK</span> BOLT © {new Date().getFullYear()}
       </footer>
     </div>
   );

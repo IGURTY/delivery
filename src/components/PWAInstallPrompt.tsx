@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, X, Bell } from 'lucide-react';
+import { Download, X, Bell, Zap } from 'lucide-react';
 import { usePWA } from '@/hooks/usePWA';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 
@@ -24,10 +24,13 @@ const PWAInstallPrompt: React.FC = () => {
         <div className="bg-gray-900 border border-primary rounded-xl p-4 shadow-xl">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shrink-0">
-              <Download className="w-5 h-5 text-dark" />
+              
+              <Zap className="w-5 h-5 text-dark" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-white">Instalar DeliveryAI</h3>
+              <h3 className="font-bold text-white">
+                Instalar <span className="text-primary">HBLACK</span> BOLT
+              </h3>
               <p className="text-sm text-gray-400 mt-1">
                 Instale o app para acesso rápido e uso offline
               </p>

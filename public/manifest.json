@@ -1,7 +1,7 @@
 {
-  "name": "DeliveryAI",
-  "short_name": "DeliveryAI",
-  "description": "App de entregas inteligente com IA",
+  "name": "HBLACK BOLT",
+  "short_name": "HBLACK BOLT",
+  "description": "Sistema inteligente de entregas com IA",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0A0A0A",

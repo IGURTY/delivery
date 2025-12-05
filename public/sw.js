@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deliveryai-v1';
+const CACHE_NAME = 'hblack-bolt-v1';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -67,7 +67,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification('DeliveryAI', options)
+    self.registration.showNotification('HBLACK BOLT', options)
   );
 });
 
