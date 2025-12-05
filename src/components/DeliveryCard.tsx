@@ -53,14 +53,39 @@ const DeliveryCard: React.FC<Props> = ({
   const proofInputRef = useRef<HTMLInputElement>(null);
   const config = statusConfig[delivery.status];
 
-  // Link do Waze
-  const wazeUrl = `https://waze.com/ul?q=${encodeURIComponent(
-    `${delivery.rua}, ${delivery.numero}, ${delivery.bairro}, ${delivery.cep}`
-  )}`;
+  // Monta o endereço completo para o Waze
+  const buildWazeUrl = () => {
+    const parts = [];
+    
+    if (delivery.rua) parts.push(delivery.rua);
+    if (delivery.numero) parts.push(delivery.numero);
+    if (delivery.bairro) parts.push(delivery.bairro);
+    if (delivery.cidade) parts.push(delivery.cidade);
+    if (delivery.estado) parts.push(delivery.estado);
+    if (delivery.cep) parts.push(delivery.cep);
+    
+    const address = parts.join(", ");
+    
+    // URL do Waze com endereço
+    return `https://waze.com/ul?q=${encodeURIComponent(address)}&navigate=yes`;
+  };
+
+  // Abre o Waze
+  const handleOpenWaze = () => {
+    const url = buildWazeUrl();
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
 
   const handleProofChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) onAttachProof(file);
+    e.target.value = "";
+  };
+
+  const handleMarkDelivered = () => {
+    if (delivery.status !== "entregue") {
+      proofInputRef.current?.click();
+    }
   };
 
   return (
@@ -85,11 +110,16 @@ const DeliveryCard: React.FC<Props> = ({
             {delivery.nome || "Destinatário não identificado"}
           </p>
           <p className="text-sm text-gray-300 truncate">
-            {delivery.rua}, {delivery.numero}
+            {delivery.rua}{delivery.numero ? `, ${delivery.numero}` : ""}
           </p>
           <p className="text-sm text-gray-400 truncate">
-            {delivery.bairro} • {delivery.cep}
+            {delivery.bairro}{delivery.cep ? ` • ${delivery.cep}` : ""}
           </p>
+          {delivery.cidade && (
+            <p className="text-xs text-gray-500 truncate">
+              {delivery.cidade}{delivery.estado ? ` - ${delivery.estado}` : ""}
+            </p>
+          )}
         </div>
 
         {/* Remover */}
@@ -114,12 +144,9 @@ const DeliveryCard: React.FC<Props> = ({
 
       {/* Botões de Ação */}
       <div className="grid grid-cols-4 gap-2">
+        {/* Entregue */}
         <button
-          onClick={() => {
-            if (delivery.status !== "entregue") {
-              proofInputRef.current?.click();
-            }
-          }}
+          onClick={handleMarkDelivered}
           className={`py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 ${
             delivery.status === "entregue"
               ? "bg-green-500 text-white"
@@ -130,6 +157,7 @@ const DeliveryCard: React.FC<Props> = ({
           <span className="hidden sm:inline">Entregue</span>
         </button>
 
+        {/* Não Entregue */}
         <button
           onClick={() => onStatusChange("nao-entregue")}
           className={`py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 ${
@@ -142,6 +170,7 @@ const DeliveryCard: React.FC<Props> = ({
           <span className="hidden sm:inline">Falhou</span>
         </button>
 
+        {/* Pendente */}
         <button
           onClick={() => onStatusChange("pendente")}
           className={`py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1 ${
@@ -154,15 +183,14 @@ const DeliveryCard: React.FC<Props> = ({
           <span className="hidden sm:inline">Pendente</span>
         </button>
 
-        <a
-          href={wazeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+        {/* Waze - BOTÃO CORRIGIDO */}
+        <button
+          onClick={handleOpenWaze}
           className="py-2 rounded-lg text-xs font-semibold bg-primary text-dark hover:bg-yellow-400 transition flex items-center justify-center gap-1"
         >
           <Navigation className="w-4 h-4" />
           <span className="hidden sm:inline">Waze</span>
-        </a>
+        </button>
       </div>
 
       {/* Input oculto para prova */}
