@@ -1,42 +1,45 @@
 import React, { useRef } from "react";
+import { Camera } from "lucide-react";
 
 type Props = {
-  onImage: (img: string) => void;
+  onCapture: (imageBase64: string) => void;
+  disabled?: boolean;
 };
 
-const ImageCapture: React.FC<Props> = ({ onImage }) => {
+const ImageCapture: React.FC<Props> = ({ onCapture, disabled }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
     const reader = new FileReader();
     reader.onload = (ev) => {
       if (ev.target?.result) {
-        onImage(ev.target.result as string);
+        onCapture(ev.target.result as string);
       }
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <button
+      onClick={() => inputRef.current?.click()}
+      disabled={disabled}
+      className="w-full flex items-center justify-center gap-3 bg-primary text-dark font-bold py-4 px-6 rounded-xl hover:bg-yellow-400 transition disabled:opacity-50"
+    >
+      <Camera className="w-6 h-6" />
+      Fotografar Entrega
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
         capture="environment"
+        onChange={handleChange}
         className="hidden"
-        onChange={handleFile}
       />
-      <button
-        className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700"
-        onClick={() => inputRef.current?.click()}
-        type="button"
-      >
-        Tirar Foto / Selecionar Imagem
-      </button>
-    </div>
+    </button>
   );
 };
 
