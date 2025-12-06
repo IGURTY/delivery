@@ -23,12 +23,3 @@ body {
   background: #FACC15;
   border-radius: 3px;
 }
-
-/* Esconde a scrollbar quando .hide-scrollbar está presente */
-.hide-scrollbar {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE 10+ */
-}
-.hide-scrollbar::-webkit-scrollbar {
-  display: none; /* Chrome/Safari/Webkit */
-}

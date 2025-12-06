@@ -41,15 +41,263 @@ function isToday(dateStr: string) {
 }
 
 const Home: React.FC = () => {
-  // ... (restante do código igual)
-  // (todo o código do componente permanece igual, só muda o container principal abaixo)
+  const [cep, setCep] = useState("");
+  const [addr, setAddr] = useState<Address|null>(null);
+  const [loading, setLoading] = useState(false);
+  const [imgs, setImgs] = useState<PendingImage[]>([]);
+  const [dels, setDels] = useState<DeliveryWithCalc[]>([]);
+  const [proc, setProc] = useState(false);
+  const [prog, setProg] = useState({c:0,t:0});
+  const [routeId, setRouteId] = useState<string | null>(null);
+  const [routesToday, setRoutesToday] = useState<db.DbRoute[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const camRef = useRef<HTMLInputElement>(null);
 
-  // ... (todas as variáveis e funções do componente)
+  // Carrega todas as rotas do dia e a última ativa
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const allRoutes = await db.getAllRoutes();
+      const todayRoutes = allRoutes.filter(r => isToday(r.created_at));
+      setRoutesToday(todayRoutes);
+      // Seleciona a última rota do dia como ativa
+      if (todayRoutes.length > 0) {
+        const last = todayRoutes[0];
+        setRouteId(last.id);
+        setCep(last.start_cep);
+        const dbDeliveries = await db.getDeliveriesByRoute(last.id);
+        setDels(dbDeliveries.map(db.dbDeliveryToDelivery));
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  // Busca endereço do CEP
+  useEffect(() => {
+    const c = cep.replace(/\D/g,"");
+    if (c.length === 8) {
+      setLoading(true);
+      fetchCep(c).then(a => {
+        setAddr(a);
+        if(a) toast.success("Endereço encontrado!");
+        else toast.error("CEP não encontrado");
+      }).finally(() => setLoading(false));
+    } else {
+      setAddr(null);
+    }
+  }, [cep]);
+
+  // Cria rota no banco se não existir
+  const ensureRoute = async () => {
+    if (routeId) return routeId;
+    const route = await db.createRoute(cep);
+    if (route) {
+      setRouteId(route.id);
+      // Atualiza lista de rotas do dia
+      setRoutesToday((prev) => [route, ...prev]);
+      return route.id;
+    }
+    return null;
+  };
+
+  // Adiciona imagens
+  const onImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    Array.from(e.target.files).forEach(f => { const r = new FileReader(); r.onload = ev => { if (ev.target?.result) setImgs(p => [...p, { id: Date.now()+Math.random().toString(36), base64: ev.target!.result as string }]); }; r.readAsDataURL(f); });
+    e.target.value = "";
+  };
+
+  // Processa imagens, salva entregas no banco
+  const process = async () => {
+    if (!addr?.coordinates) { toast.error("CEP sem coordenadas"); return; }
+    if (!imgs.length) { toast.error("Adicione imagens"); return; }
+    setProc(true); setProg({c:0,t:imgs.length});
+    const res: DeliveryWithCalc[] = [];
+    const route_id = await ensureRoute();
+    if (!route_id) { toast.error("Erro ao criar rota"); setProc(false); return; }
+
+    for (let i = 0; i < imgs.length; i++) {
+      setProg({c:i+1,t:imgs.length});
+      const d = await extractImg(imgs[i].base64);
+      if (d?.cep) {
+        const a = await fetchCep(d.cep);
+        const delivery: DeliveryWithCalc = {
+          id: imgs[i].id,
+          nome: d.nome||"",
+          rua: d.rua||a?.street||"",
+          numero: d.numero||"",
+          bairro: d.bairro||a?.neighborhood||"",
+          cep: d.cep,
+          cidade: d.cidade||a?.city||"",
+          estado: d.estado||a?.state||"",
+          status: "pendente",
+          image: imgs[i].base64,
+          coordinates: a?.coordinates,
+        };
+        if (delivery.coordinates && addr.coordinates) delivery.distance = calcDist(addr.coordinates, delivery.coordinates);
+        // Salva no banco (removendo os campos auxiliares)
+        const { coordinates, distance, ...toSave } = delivery;
+        const dbDelivery = await db.createDelivery(route_id, toSave, i);
+        if (dbDelivery) delivery.id = dbDelivery.id;
+        res.push(delivery);
+      } else toast.error(`Imagem ${i+1}: falha`);
+    }
+    res.sort((a,b) => (a.distance||Infinity) - (b.distance||Infinity));
+    setDels(res); setImgs([]); setProc(false);
+    if (res.length) toast.success(`${res.length} entregas ordenadas!`);
+  };
+
+  // Atualiza status no banco
+  const updateStatus = async (id: string, status: DeliveryCardType["status"]) => {
+    setDels((prev) => prev.map((d) => d.id === id ? { ...d, status } : d));
+    await db.updateDeliveryStatus(id, status);
+  };
+
+  // Remove entrega do banco
+  const removeDelivery = async (id: string) => {
+    setDels((prev) => prev.filter((d) => d.id !== id));
+    await db.deleteDelivery(id);
+  };
+
+  // Reset tudo e cancela rota no banco
+  const reset = async () => {
+    if (routeId) await db.updateRouteStatus(routeId, "cancelled");
+    setDels([]); setImgs([]); setCep(""); setAddr(null); setRouteId(null);
+  };
+
+  // Seleciona rota do dia
+  const selectRoute = async (routeId: string, start_cep: string) => {
+    setRouteId(routeId);
+    setCep(start_cep);
+    const dbDeliveries = await db.getDeliveriesByRoute(routeId);
+    setDels(dbDeliveries.map(db.dbDeliveryToDelivery));
+    setShowHistory(false);
+  };
+
+  const stats = { t: dels.length, e: dels.filter(d=>d.status==="entregue").length, p: dels.filter(d=>d.status==="pendente").length, f: dels.filter(d=>d.status==="nao-entregue").length };
 
   return (
-    <div className="min-h-screen bg-gray-950 hide-scrollbar">
-      {/* ...restante do JSX igual */}
-      {/* ... */}
+    <div className="min-h-screen bg-gray-950">
+      <Toaster position="top-center" richColors />
+      <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+        <div className="max-w-lg mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center"><Zap className="w-6 h-6 text-gray-900" /></div>
+            <div><h1 className="text-lg font-black text-white"><span className="text-yellow-400">HBLACK</span> BOLT</h1><p className="text-[10px] text-gray-500 -mt-1">Entregas Inteligentes</p></div>
+          </div>
+          <div className="flex items-center gap-2">
+            {routesToday.length > 1 && (
+              <button onClick={() => setShowHistory(true)} className="p-2 text-gray-400 hover:text-yellow-400" title="Histórico do dia">
+                <History className="w-5 h-5" />
+              </button>
+            )}
+            {(dels.length > 0 || imgs.length > 0) && <button onClick={reset} className="p-2 text-gray-400 hover:text-yellow-400"><RotateCcw className="w-5 h-5" /></button>}
+          </div>
+        </div>
+      </header>
+
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl max-w-lg w-full max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+              <h2 className="font-bold text-white">Rotas do Dia</h2>
+              <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white text-xl">×</button>
+            </div>
+            <div className="p-4 space-y-3">
+              {routesToday.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">Nenhuma rota encontrada</p>
+              ) : (
+                routesToday.map((route) => (
+                  <button
+                    key={route.id}
+                    onClick={() => selectRoute(route.id, route.start_cep)}
+                    className={`w-full p-4 bg-gray-800 rounded-lg text-left hover:bg-gray-700 transition ${routeId === route.id ? "border-2 border-yellow-400" : ""}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-white">CEP: {route.start_cep}</p>
+                        <p className="text-sm text-gray-400">{route.completed_deliveries}/{route.total_deliveries} entregas</p>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        route.status === "completed" ? "bg-green-500/20 text-green-400" :
+                        route.status === "active" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"
+                      }`}>
+                        {route.status === "completed" ? "Concluída" : route.status === "active" ? "Ativa" : "Cancelada"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">{new Date(route.created_at).toLocaleTimeString("pt-BR")}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-lg mx-auto px-4 py-6 space-y-6 pb-32">
+        {dels.length === 0 && imgs.length === 0 && (
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <div className="flex items-start gap-3"><Info className="w-5 h-5 text-yellow-400 shrink-0" /><div className="text-sm text-gray-300"><p className="font-semibold text-white mb-2">Como usar:</p><ol className="list-decimal list-inside space-y-1"><li>Informe seu CEP de partida</li><li>Tire fotos das etiquetas</li><li>Clique em Calcular Rota</li><li>Entregas ordenadas por distância</li><li>Clique em Waze para navegar</li></ol></div></div>
+          </div>
+        )}
+        <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+          <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-2"><MapPin className="w-4 h-4 text-yellow-400" />CEP de Partida</label>
+          <input type="text" value={cep} onChange={e => setCep(fmtCep(e.target.value))} placeholder="00000-000" maxLength={9} disabled={dels.length > 0} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 disabled:opacity-50" />
+          {loading && <div className="flex items-center gap-2 mt-3 text-yellow-400"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">Buscando...</span></div>}
+          {addr && <div className="mt-3 p-3 bg-gray-800 rounded-lg border border-green-800"><p className="text-sm text-green-400 font-semibold">✓ Endereço de Partida</p><p className="text-sm text-gray-300">{addr.street}, {addr.neighborhood}</p><p className="text-sm text-gray-400">{addr.city} - {addr.state}</p></div>}
+        </div>
+        {addr && dels.length === 0 && (
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <label className="flex items-center gap-2 text-sm font-semibold text-gray-300 mb-3"><Images className="w-4 h-4 text-yellow-400" />Fotos ({imgs.length})</label>
+            <div className="flex gap-2 mb-4">
+              <button onClick={() => camRef.current?.click()} disabled={proc} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50"><Camera className="w-5 h-5" />Câmera</button>
+              <button onClick={() => fileRef.current?.click()} disabled={proc} className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 disabled:opacity-50"><Upload className="w-5 h-5" />Galeria</button>
+            </div>
+            <input ref={camRef} type="file" accept="image/*" capture="environment" onChange={onImg} className="hidden" />
+            <input ref={fileRef} type="file" accept="image/*" multiple onChange={onImg} className="hidden" />
+            {imgs.length > 0 && (
+              <>
+                <div className="grid grid-cols-4 gap-2 mb-4">{imgs.map(i => <div key={i.id} className="relative"><img src={i.base64} className="w-full h-16 object-cover rounded-lg" /><button onClick={() => setImgs(p => p.filter(x => x.id !== i.id))} className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center"><X className="w-3 h-3 text-white" /></button></div>)}</div>
+                <button onClick={process} disabled={proc} className="w-full bg-yellow-400 text-gray-900 font-bold py-4 rounded-xl hover:bg-yellow-300 disabled:opacity-50 flex items-center justify-center gap-2">{proc ? <><Loader2 className="w-5 h-5 animate-spin" />Processando {prog.c}/{prog.t}...</> : <><Route className="w-5 h-5" />Calcular Rota ({imgs.length})</>}</button>
+              </>
+            )}
+          </div>
+        )}
+        {dels.length > 0 && (
+          <>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-gray-900 rounded-lg p-3 text-center border border-gray-800"><p className="text-2xl font-bold text-white">{stats.t}</p><p className="text-xs text-gray-500">Total</p></div>
+              <div className="bg-gray-900 rounded-lg p-3 text-center border border-green-800"><p className="text-2xl font-bold text-green-400">{stats.e}</p><p className="text-xs text-gray-500">Entregues</p></div>
+              <div className="bg-gray-900 rounded-lg p-3 text-center border border-blue-800"><p className="text-2xl font-bold text-blue-400">{stats.p}</p><p className="text-xs text-gray-500">Pendentes</p></div>
+              <div className="bg-gray-900 rounded-lg p-3 text-center border border-red-800"><p className="text-2xl font-bold text-red-400">{stats.f}</p><p className="text-xs text-gray-500">Falhas</p></div>
+            </div>
+            <div className="space-y-3">
+              {dels.map((d, i) => (
+                <div key={d.id} className={`rounded-xl border-2 p-4 ${d.status === "entregue" ? "bg-green-500/10 border-green-500" : d.status === "nao-entregue" ? "bg-red-500/10 border-red-500" : "bg-blue-500/10 border-blue-500"}`}>
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="w-10 h-10 bg-yellow-400 text-gray-900 rounded-full flex items-center justify-center font-bold text-lg shrink-0">{i + 1}</div>
+                    {d.image && <img src={d.image} className="w-14 h-14 object-cover rounded-lg border-2 border-gray-700" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-yellow-400 truncate">{d.nome || "Destinatário"}</p>
+                      <p className="text-sm text-gray-300 truncate">{d.rua}{d.numero ? `, ${d.numero}` : ""}</p>
+                      <p className="text-sm text-gray-400 truncate">{d.bairro} - {d.cep}</p>
+                      {d.distance && <p className="text-xs text-gray-500 mt-1">{d.distance.toFixed(1)} km</p>}
+                    </div>
+                    <button onClick={() => removeDelivery(d.id)} className="p-2 text-gray-500 hover:text-red-500"><Trash2 className="w-5 h-5" /></button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    <button onClick={() => updateStatus(d.id, "entregue")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "entregue" ? "bg-green-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-green-500 hover:text-white"}`}><CheckCircle2 className="w-4 h-4" /></button>
+                    <button onClick={() => updateStatus(d.id, "nao-entregue")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "nao-entregue" ? "bg-red-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-red-500 hover:text-white"}`}><XCircle className="w-4 h-4" /></button>
+                    <button onClick={() => updateStatus(d.id, "pendente")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "pendente" ? "bg-blue-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white"}`}><Clock className="w-4 h-4" /></button>
+                    <button onClick={() => d.coordinates && openWaze(d.coordinates)} disabled={!d.coordinates} className="py-2 rounded-lg text-xs font-semibold bg-yellow-400 text-gray-900 hover:bg-yellow-300 disabled:opacity-50 flex items-center justify-center gap-1"><Navigation className="w-4 h-4" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </main>
     </div>
   );
 };
