@@ -32,13 +32,38 @@ export type DbDelivery = {
   updated_at: string;
 };
 
+export async function uploadImage(base64: string, folder: string = 'labels'): Promise<string> {
+  try {
+    const base64Data = base64.split(',')[1];
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'image/jpeg' });
+    const fileName = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+
+    const { data, error } = await supabase.storage
+      .from('delivery-images')
+      .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
+
+    if (error) return base64;
+
+    const { data: urlData } = supabase.storage.from('delivery-images').getPublicUrl(data.path);
+    return urlData.publicUrl;
+  } catch {
+    return base64;
+  }
+}
+
 export async function createRoute(startCep: string): Promise<DbRoute | null> {
   const { data, error } = await supabase
     .from('routes')
     .insert({ start_cep: startCep, status: 'active', total_deliveries: 0, completed_deliveries: 0 })
     .select()
     .single();
-  if (error) { console.error('Erro:', error); return null; }
+  if (error) return null;
   return data as DbRoute;
 }
 
@@ -67,11 +92,20 @@ export async function updateRouteStats(routeId: string): Promise<boolean> {
   const { data: deliveries } = await supabase.from('deliveries').select('status').eq('route_id', routeId);
   const total = deliveries?.length || 0;
   const completed = deliveries?.filter((d: any) => d.status === 'entregue').length || 0;
-  await supabase.from('routes').update({ total_deliveries: total, completed_deliveries: completed }).eq('id', routeId);
-  return true;
+  const { error } = await supabase
+    .from('routes')
+    .update({ total_deliveries: total, completed_deliveries: completed, status: total > 0 && completed === total ? 'completed' : 'active' })
+    .eq('id', routeId);
+  return !error;
+}
+
+export async function deleteRoute(routeId: string): Promise<boolean> {
+  const { error } = await supabase.from('routes').delete().eq('id', routeId);
+  return !error;
 }
 
 export async function createDelivery(routeId: string, delivery: Delivery, orderIndex: number): Promise<DbDelivery | null> {
+  const imageUrl = delivery.image ? await uploadImage(delivery.image, 'labels') : null;
   const { data, error } = await supabase
     .from('deliveries')
     .insert({
@@ -85,11 +119,11 @@ export async function createDelivery(routeId: string, delivery: Delivery, orderI
       cidade: delivery.cidade || null,
       estado: delivery.estado || null,
       status: delivery.status,
-      image_url: delivery.image || null
+      image_url: imageUrl
     })
     .select()
     .single();
-  if (error) { console.error('Erro:', error); return null; }
+  if (error) return null;
   await updateRouteStats(routeId);
   return data as DbDelivery;
 }
@@ -101,7 +135,10 @@ export async function getDeliveriesByRoute(routeId: string): Promise<DbDelivery[
 
 export async function updateDeliveryStatus(deliveryId: string, status: DeliveryStatus, proofImage?: string): Promise<boolean> {
   const updates: any = { status, delivered_at: status === 'entregue' ? new Date().toISOString() : null };
-  if (proofImage) updates.proof_image_url = proofImage;
+  if (proofImage) {
+    const proofUrl = await uploadImage(proofImage, 'proofs');
+    updates.proof_image_url = proofUrl;
+  }
   const { data, error } = await supabase.from('deliveries').update(updates).eq('id', deliveryId).select('route_id').single();
   if (error) return false;
   if (data?.route_id) await updateRouteStats(data.route_id);
@@ -117,7 +154,8 @@ export async function updateDeliveryOrder(routeId: string, deliveryIds: string[]
 
 export async function deleteDelivery(deliveryId: string): Promise<boolean> {
   const { data: delivery } = await supabase.from('deliveries').select('route_id').eq('id', deliveryId).single();
-  await supabase.from('deliveries').delete().eq('id', deliveryId);
+  const { error } = await supabase.from('deliveries').delete().eq('id', deliveryId);
+  if (error) return false;
   if (delivery?.route_id) await updateRouteStats(delivery.route_id);
   return true;
 }
