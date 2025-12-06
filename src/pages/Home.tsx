@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
 import { MapPin, Loader2, RotateCcw, Info, Zap, Camera, Upload, Navigation, Trash2, CheckCircle2, XCircle, Clock, Route, Images, X } from "lucide-react";
+import * as db from "@/services/database";
+import type { Delivery as DeliveryCardType } from "@/components/DeliveryCard";
 
 interface Coordinates { latitude: number; longitude: number; }
 interface Address { cep: string; street: string; neighborhood: string; city: string; state: string; coordinates?: Coordinates; }
 interface PendingImage { id: string; base64: string; }
-interface Delivery { id: string; nome: string; rua: string; numero: string; bairro: string; cep: string; cidade: string; estado: string; coordinates?: Coordinates; distance?: number; status: "pendente" | "entregue" | "nao-entregue"; image?: string; }
+// Extende DeliveryCardType com campos auxiliares para cálculo/ordenação
+type DeliveryWithCalc = DeliveryCardType & { coordinates?: Coordinates; distance?: number };
 
 const EDGE_URL = "https://gkjyajysblgdxujbdwxc.supabase.co/functions/v1/extract_address";
 
@@ -36,17 +39,50 @@ const Home: React.FC = () => {
   const [addr, setAddr] = useState<Address|null>(null);
   const [loading, setLoading] = useState(false);
   const [imgs, setImgs] = useState<PendingImage[]>([]);
-  const [dels, setDels] = useState<Delivery[]>([]);
+  const [dels, setDels] = useState<DeliveryWithCalc[]>([]);
   const [proc, setProc] = useState(false);
   const [prog, setProg] = useState({c:0,t:0});
+  const [routeId, setRouteId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const camRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const activeRoute = await db.getActiveRoute();
+      if (activeRoute) {
+        setRouteId(activeRoute.id);
+        setCep(activeRoute.start_cep);
+        const dbDeliveries = await db.getDeliveriesByRoute(activeRoute.id);
+        setDels(dbDeliveries.map(db.dbDeliveryToDelivery));
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
     const c = cep.replace(/\D/g,"");
-    if (c.length === 8) { setLoading(true); fetchCep(c).then(a => { setAddr(a); if(a) toast.success("Endereço encontrado!"); else toast.error("CEP não encontrado"); }).finally(() => setLoading(false)); }
-    else setAddr(null);
+    if (c.length === 8) {
+      setLoading(true);
+      fetchCep(c).then(a => {
+        setAddr(a);
+        if(a) toast.success("Endereço encontrado!");
+        else toast.error("CEP não encontrado");
+      }).finally(() => setLoading(false));
+    } else {
+      setAddr(null);
+    }
   }, [cep]);
+
+  const ensureRoute = async () => {
+    if (routeId) return routeId;
+    const route = await db.createRoute(cep);
+    if (route) {
+      setRouteId(route.id);
+      return route.id;
+    }
+    return null;
+  };
 
   const onImg = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -58,15 +94,34 @@ const Home: React.FC = () => {
     if (!addr?.coordinates) { toast.error("CEP sem coordenadas"); return; }
     if (!imgs.length) { toast.error("Adicione imagens"); return; }
     setProc(true); setProg({c:0,t:imgs.length});
-    const res: Delivery[] = [];
+    const res: DeliveryWithCalc[] = [];
+    const route_id = await ensureRoute();
+    if (!route_id) { toast.error("Erro ao criar rota"); setProc(false); return; }
+
     for (let i = 0; i < imgs.length; i++) {
       setProg({c:i+1,t:imgs.length});
       const d = await extractImg(imgs[i].base64);
       if (d?.cep) {
         const a = await fetchCep(d.cep);
-        const del: Delivery = { id: imgs[i].id, nome: d.nome||"", rua: d.rua||a?.street||"", numero: d.numero||"", bairro: d.bairro||a?.neighborhood||"", cep: d.cep, cidade: d.cidade||a?.city||"", estado: d.estado||a?.state||"", coordinates: a?.coordinates, status: "pendente", image: imgs[i].base64 };
-        if (del.coordinates && addr.coordinates) del.distance = calcDist(addr.coordinates, del.coordinates);
-        res.push(del);
+        const delivery: DeliveryWithCalc = {
+          id: imgs[i].id,
+          nome: d.nome||"",
+          rua: d.rua||a?.street||"",
+          numero: d.numero||"",
+          bairro: d.bairro||a?.neighborhood||"",
+          cep: d.cep,
+          cidade: d.cidade||a?.city||"",
+          estado: d.estado||a?.state||"",
+          status: "pendente",
+          image: imgs[i].base64,
+          coordinates: a?.coordinates,
+        };
+        if (delivery.coordinates && addr.coordinates) delivery.distance = calcDist(addr.coordinates, delivery.coordinates);
+        // Salva no banco (removendo os campos auxiliares)
+        const { coordinates, distance, ...toSave } = delivery;
+        const dbDelivery = await db.createDelivery(route_id, toSave, i);
+        if (dbDelivery) delivery.id = dbDelivery.id;
+        res.push(delivery);
       } else toast.error(`Imagem ${i+1}: falha`);
     }
     res.sort((a,b) => (a.distance||Infinity) - (b.distance||Infinity));
@@ -74,7 +129,21 @@ const Home: React.FC = () => {
     if (res.length) toast.success(`${res.length} entregas ordenadas!`);
   };
 
-  const reset = () => { setDels([]); setImgs([]); setCep(""); setAddr(null); };
+  const updateStatus = async (id: string, status: DeliveryCardType["status"]) => {
+    setDels((prev) => prev.map((d) => d.id === id ? { ...d, status } : d));
+    await db.updateDeliveryStatus(id, status);
+  };
+
+  const removeDelivery = async (id: string) => {
+    setDels((prev) => prev.filter((d) => d.id !== id));
+    await db.deleteDelivery(id);
+  };
+
+  const reset = async () => {
+    if (routeId) await db.updateRouteStatus(routeId, "cancelled");
+    setDels([]); setImgs([]); setCep(""); setAddr(null); setRouteId(null);
+  };
+
   const stats = { t: dels.length, e: dels.filter(d=>d.status==="entregue").length, p: dels.filter(d=>d.status==="pendente").length, f: dels.filter(d=>d.status==="nao-entregue").length };
 
   return (
@@ -138,12 +207,12 @@ const Home: React.FC = () => {
                       <p className="text-sm text-gray-400 truncate">{d.bairro} - {d.cep}</p>
                       {d.distance && <p className="text-xs text-gray-500 mt-1">{d.distance.toFixed(1)} km</p>}
                     </div>
-                    <button onClick={() => setDels(p => p.filter(x => x.id !== d.id))} className="p-2 text-gray-500 hover:text-red-500"><Trash2 className="w-5 h-5" /></button>
+                    <button onClick={() => removeDelivery(d.id)} className="p-2 text-gray-500 hover:text-red-500"><Trash2 className="w-5 h-5" /></button>
                   </div>
                   <div className="grid grid-cols-4 gap-2">
-                    <button onClick={() => setDels(p => p.map(x => x.id === d.id ? {...x, status: "entregue"} : x))} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "entregue" ? "bg-green-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-green-500 hover:text-white"}`}><CheckCircle2 className="w-4 h-4" /></button>
-                    <button onClick={() => setDels(p => p.map(x => x.id === d.id ? {...x, status: "nao-entregue"} : x))} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "nao-entregue" ? "bg-red-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-red-500 hover:text-white"}`}><XCircle className="w-4 h-4" /></button>
-                    <button onClick={() => setDels(p => p.map(x => x.id === d.id ? {...x, status: "pendente"} : x))} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "pendente" ? "bg-blue-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white"}`}><Clock className="w-4 h-4" /></button>
+                    <button onClick={() => updateStatus(d.id, "entregue")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "entregue" ? "bg-green-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-green-500 hover:text-white"}`}><CheckCircle2 className="w-4 h-4" /></button>
+                    <button onClick={() => updateStatus(d.id, "nao-entregue")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "nao-entregue" ? "bg-red-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-red-500 hover:text-white"}`}><XCircle className="w-4 h-4" /></button>
+                    <button onClick={() => updateStatus(d.id, "pendente")} className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 ${d.status === "pendente" ? "bg-blue-500 text-white" : "bg-gray-700 text-gray-300 hover:bg-blue-500 hover:text-white"}`}><Clock className="w-4 h-4" /></button>
                     <button onClick={() => d.coordinates && openWaze(d.coordinates)} disabled={!d.coordinates} className="py-2 rounded-lg text-xs font-semibold bg-yellow-400 text-gray-900 hover:bg-yellow-300 disabled:opacity-50 flex items-center justify-center gap-1"><Navigation className="w-4 h-4" /></button>
                   </div>
                 </div>
