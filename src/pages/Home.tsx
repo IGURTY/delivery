@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
 import { toast, Toaster } from "sonner";
-import { MapPin, Loader2, RotateCcw, Info, Zap, Camera, Upload, Navigation, Trash2, CheckCircle2, XCircle, Clock, Route, Images, X } from "lucide-react";
+import { MapPin, Loader2, RotateCcw, Info, Zap, Camera, Upload, Navigation, Trash2, CheckCircle2, XCircle, Clock, Route, Images, X, History } from "lucide-react";
 import * as db from "@/services/database";
 import type { Delivery as DeliveryCardType } from "@/components/DeliveryCard";
 
 interface Coordinates { latitude: number; longitude: number; }
 interface Address { cep: string; street: string; neighborhood: string; city: string; state: string; coordinates?: Coordinates; }
 interface PendingImage { id: string; base64: string; }
-// Extende DeliveryCardType com campos auxiliares para cálculo/ordenação
 type DeliveryWithCalc = DeliveryCardType & { coordinates?: Coordinates; distance?: number };
 
 const EDGE_URL = "https://gkjyajysblgdxujbdwxc.supabase.co/functions/v1/extract_address";
@@ -34,6 +33,13 @@ const extractImg = async (img: string) => {
 const openWaze = (c: Coordinates) => window.open(`https://waze.com/ul?ll=${c.latitude},${c.longitude}&navigate=yes`, "_blank");
 const fmtCep = (v: string) => { const d = v.replace(/\D/g,"").slice(0,8); return d.length > 5 ? `${d.slice(0,5)}-${d.slice(5)}` : d; };
 
+// Helper para saber se a rota é do dia atual
+function isToday(dateStr: string) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
 const Home: React.FC = () => {
   const [cep, setCep] = useState("");
   const [addr, setAddr] = useState<Address|null>(null);
@@ -43,23 +49,31 @@ const Home: React.FC = () => {
   const [proc, setProc] = useState(false);
   const [prog, setProg] = useState({c:0,t:0});
   const [routeId, setRouteId] = useState<string | null>(null);
+  const [routesToday, setRoutesToday] = useState<db.DbRoute[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const camRef = useRef<HTMLInputElement>(null);
 
+  // Carrega todas as rotas do dia e a última ativa
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const activeRoute = await db.getActiveRoute();
-      if (activeRoute) {
-        setRouteId(activeRoute.id);
-        setCep(activeRoute.start_cep);
-        const dbDeliveries = await db.getDeliveriesByRoute(activeRoute.id);
+      const allRoutes = await db.getAllRoutes();
+      const todayRoutes = allRoutes.filter(r => isToday(r.created_at));
+      setRoutesToday(todayRoutes);
+      // Seleciona a última rota do dia como ativa
+      if (todayRoutes.length > 0) {
+        const last = todayRoutes[0];
+        setRouteId(last.id);
+        setCep(last.start_cep);
+        const dbDeliveries = await db.getDeliveriesByRoute(last.id);
         setDels(dbDeliveries.map(db.dbDeliveryToDelivery));
       }
       setLoading(false);
     })();
   }, []);
 
+  // Busca endereço do CEP
   useEffect(() => {
     const c = cep.replace(/\D/g,"");
     if (c.length === 8) {
@@ -74,22 +88,27 @@ const Home: React.FC = () => {
     }
   }, [cep]);
 
+  // Cria rota no banco se não existir
   const ensureRoute = async () => {
     if (routeId) return routeId;
     const route = await db.createRoute(cep);
     if (route) {
       setRouteId(route.id);
+      // Atualiza lista de rotas do dia
+      setRoutesToday((prev) => [route, ...prev]);
       return route.id;
     }
     return null;
   };
 
+  // Adiciona imagens
   const onImg = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     Array.from(e.target.files).forEach(f => { const r = new FileReader(); r.onload = ev => { if (ev.target?.result) setImgs(p => [...p, { id: Date.now()+Math.random().toString(36), base64: ev.target!.result as string }]); }; r.readAsDataURL(f); });
     e.target.value = "";
   };
 
+  // Processa imagens, salva entregas no banco
   const process = async () => {
     if (!addr?.coordinates) { toast.error("CEP sem coordenadas"); return; }
     if (!imgs.length) { toast.error("Adicione imagens"); return; }
@@ -129,19 +148,31 @@ const Home: React.FC = () => {
     if (res.length) toast.success(`${res.length} entregas ordenadas!`);
   };
 
+  // Atualiza status no banco
   const updateStatus = async (id: string, status: DeliveryCardType["status"]) => {
     setDels((prev) => prev.map((d) => d.id === id ? { ...d, status } : d));
     await db.updateDeliveryStatus(id, status);
   };
 
+  // Remove entrega do banco
   const removeDelivery = async (id: string) => {
     setDels((prev) => prev.filter((d) => d.id !== id));
     await db.deleteDelivery(id);
   };
 
+  // Reset tudo e cancela rota no banco
   const reset = async () => {
     if (routeId) await db.updateRouteStatus(routeId, "cancelled");
     setDels([]); setImgs([]); setCep(""); setAddr(null); setRouteId(null);
+  };
+
+  // Seleciona rota do dia
+  const selectRoute = async (routeId: string, start_cep: string) => {
+    setRouteId(routeId);
+    setCep(start_cep);
+    const dbDeliveries = await db.getDeliveriesByRoute(routeId);
+    setDels(dbDeliveries.map(db.dbDeliveryToDelivery));
+    setShowHistory(false);
   };
 
   const stats = { t: dels.length, e: dels.filter(d=>d.status==="entregue").length, p: dels.filter(d=>d.status==="pendente").length, f: dels.filter(d=>d.status==="nao-entregue").length };
@@ -155,9 +186,55 @@ const Home: React.FC = () => {
             <div className="w-10 h-10 bg-yellow-400 rounded-lg flex items-center justify-center"><Zap className="w-6 h-6 text-gray-900" /></div>
             <div><h1 className="text-lg font-black text-white"><span className="text-yellow-400">HBLACK</span> BOLT</h1><p className="text-[10px] text-gray-500 -mt-1">Entregas Inteligentes</p></div>
           </div>
-          {(dels.length > 0 || imgs.length > 0) && <button onClick={reset} className="p-2 text-gray-400 hover:text-yellow-400"><RotateCcw className="w-5 h-5" /></button>}
+          <div className="flex items-center gap-2">
+            {routesToday.length > 1 && (
+              <button onClick={() => setShowHistory(true)} className="p-2 text-gray-400 hover:text-yellow-400" title="Histórico do dia">
+                <History className="w-5 h-5" />
+              </button>
+            )}
+            {(dels.length > 0 || imgs.length > 0) && <button onClick={reset} className="p-2 text-gray-400 hover:text-yellow-400"><RotateCcw className="w-5 h-5" /></button>}
+          </div>
         </div>
       </header>
+
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-900 rounded-xl max-w-lg w-full max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+              <h2 className="font-bold text-white">Rotas do Dia</h2>
+              <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white text-xl">×</button>
+            </div>
+            <div className="p-4 space-y-3">
+              {routesToday.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">Nenhuma rota encontrada</p>
+              ) : (
+                routesToday.map((route) => (
+                  <button
+                    key={route.id}
+                    onClick={() => selectRoute(route.id, route.start_cep)}
+                    className={`w-full p-4 bg-gray-800 rounded-lg text-left hover:bg-gray-700 transition ${routeId === route.id ? "border-2 border-yellow-400" : ""}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold text-white">CEP: {route.start_cep}</p>
+                        <p className="text-sm text-gray-400">{route.completed_deliveries}/{route.total_deliveries} entregas</p>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        route.status === "completed" ? "bg-green-500/20 text-green-400" :
+                        route.status === "active" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"
+                      }`}>
+                        {route.status === "completed" ? "Concluída" : route.status === "active" ? "Ativa" : "Cancelada"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">{new Date(route.created_at).toLocaleTimeString("pt-BR")}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6 pb-32">
         {dels.length === 0 && imgs.length === 0 && (
           <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
